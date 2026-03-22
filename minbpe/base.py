@@ -163,3 +163,35 @@ class Tokenizer:
         self.merges = merges
         self.special_tokens = special_tokens
         self.vocab = self._build_vocab()
+
+
+if __name__ == '__main__':
+    with open('tests/taylorswift.txt', 'r') as f:
+        text = f.read()
+
+    tokens = text.encode('utf-8')
+    tokens = [int(t) for t in tokens]
+
+    stats = get_stats(tokens)
+
+    print(f"stats: {stats}")
+
+    top_pair = max(stats, key=stats.get)
+
+    print("most frequent pair:(%s, %s) " % (chr(top_pair[0]), chr(top_pair[1])))
+
+    vocab_size = 276
+
+    vocab = {i: bytes([i]) for i in range(256)}
+
+    idx = 256
+    while idx < vocab_size:
+        pair = max(stats, key=stats.get)
+        vocab[idx] = vocab[pair[0]] + vocab[pair[1]]
+        tokens = merge(tokens, pair, idx)
+        stats = get_stats(tokens, stats)
+        idx += 1
+
+    print(f"final vocab: {vocab}")
+
+
