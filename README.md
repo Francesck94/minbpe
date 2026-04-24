@@ -5,6 +5,7 @@ My implementation of the BPE (Byte Pair Encoding) tokenizers from Andrej Karpath
 ## What is this?
 
 This is a fork of [karpathy/minbpe](https://github.com/karpathy/minbpe). Instead of using the reference solutions, I'm implementing each tokenizer from scratch by following the lecture and the step-by-step exercise progression. The goal is to deeply understand how BPE tokenization works in modern LLMs (GPT-2, GPT-4, Llama, etc.).
+My code is in minbpe directory
 
 ## Progress
 
