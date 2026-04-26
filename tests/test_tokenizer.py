@@ -70,12 +70,12 @@ def test_gpt4_tiktoken_equality(text):
     assert gpt4_tokenizer_ids == tiktoken_ids
 
 # test the handling of special tokens
-# def test_gpt4_tiktoken_equality_special_tokens():
-#     tokenizer = GPT4Tokenizer()
-#     enc = tiktoken.get_encoding("cl100k_base")
-#     tiktoken_ids = enc.encode(specials_string, allowed_special="all")
-#     gpt4_tokenizer_ids = tokenizer.encode(specials_string, allowed_special="all")
-#     assert gpt4_tokenizer_ids == tiktoken_ids
+def test_gpt4_tiktoken_equality_special_tokens():
+    tokenizer = GPT4Tokenizer()
+    enc = tiktoken.get_encoding("cl100k_base")
+    tiktoken_ids = enc.encode(specials_string, allowed_special="all")
+    gpt4_tokenizer_ids = tokenizer.encode(specials_string, allowed_special="all")
+    assert gpt4_tokenizer_ids == tiktoken_ids
 
 # reference test to add more tests in the future
 @pytest.mark.parametrize("tokenizer_factory", [BasicTokenizer, RegexTokenizer])

@@ -57,7 +57,16 @@ class GPT4Tokenizer(RegexTokenizer):
         super().__init__()
         enc = tiktoken.get_encoding("cl100k_base")
         #self.merges = {} # (int, int) -> int
-        self.special_tokens = {} # str -> int, e.g. {'<|endoftext|>': 100257}
+        self.special_tokens_gpt4 = {
+    '<|endoftext|>': 100257,
+    '<|fim_prefix|>': 100258,
+    '<|fim_middle|>': 100259,
+    '<|fim_suffix|>': 100260,
+    '<|endofprompt|>': 100276
+}
+        #self.special_tokens = {} # str -> int, e.g. {'<|endoftext|>': 100257}
+        self.special_tokens = self.special_tokens_gpt4
+
         self.shuffle=shuffle
         self.byte_shuffle = {i: enc._mergeable_ranks[bytes([i])] for i in range(256)}
         self.inv_byte_shuffle = {v: k for k, v in self.byte_shuffle.items()}
@@ -77,6 +86,7 @@ class GPT4Tokenizer(RegexTokenizer):
         for special, idx in self.special_tokens.items():
             vocab[idx] = special.encode("utf-8")
         return vocab
+    
     
     def train(self, text, vocab_size, verbose=False):
         """
@@ -116,14 +126,32 @@ class GPT4Tokenizer(RegexTokenizer):
         # create new vocab
         self.vocab = self._build_vocab()
 
-    def encode(self, text, verbose=False):
+    def encode(self, text, allowed_special=None, verbose=False):
         # Tokenizer can encode a string into a list of integers
 
         pattern = re.compile(self.pattern)
 
+        if allowed_special is not None:
+            if allowed_special == "all":
+                print("Registering GPT4 special tokens")
+                #self.special_tokens = self.special_tokens_gpt4
+                special_alt = "|".join(re.escape(s) for s in sorted(self.special_tokens.keys(), key=len, reverse=True))
+                self.pattern = rf"(?:{special_alt})|{self.pattern}"
+                print(f"New pattern: {self.pattern}")
+            else:
+                pass # TODO implement other options for allowed_special
+
         text_chunks = re.findall(self.pattern, text)
 
-        tokens_chunks = [list(map(int, t.encode('utf-8'))) for t in text_chunks]
+        if allowed_special is None:
+            tokens_chunks = [list(map(int, t.encode('utf-8'))) for t in text_chunks]
+        else:
+            tokens_chunks = []
+            for t in text_chunks:
+                if t in self.special_tokens.keys():
+                    tokens_chunks.append([self.special_tokens[t]])
+                else:
+                    tokens_chunks.append(list(map(int, t.encode('utf-8'))))
 
         tokens_chunks_shuffled = []
         for t_chunk in tokens_chunks:
@@ -211,11 +239,18 @@ if __name__ == "__main__":
     # #print(f"\nfinal merges: {tokenizer.merges}\n")
     enc_gpt = tiktoken.get_encoding("cl100k_base")
 
-    text = "hello world!!!? (안녕하세요!) lol123 😉"
+    #text = "hello world!!!? (안녕하세요!) lol123 😉"
+    #text = "<|endoftext|><|fim_prefix|>And this one has<|fim_suffix|> tokens.<|fim_middle|> FIM"
+    text = """
+<|endoftext|>Hello world this is one document
+<|endoftext|>And this is another document
+<|endoftext|><|fim_prefix|>And this one has<|fim_suffix|> tokens.<|fim_middle|> FIM
+<|endoftext|>Last document!!! 👋<|endofprompt|>
+""".strip()
     #text = "a"
     print(f"Original text: {text}")
-    tokens = tokenizer.encode(text, verbose=True)
-    tokens_gpt_encoded = enc_gpt.encode(text)
+    tokens = tokenizer.encode(text, allowed_special="all", verbose=True)
+    tokens_gpt_encoded = enc_gpt.encode(text, allowed_special="all")
     print(f"GPT4 encoded tokens: {tokens_gpt_encoded}")
     print(f"Encoded tokens: {tokens}")
     decoded = tokenizer.decode(tokens)
