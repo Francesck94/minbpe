@@ -126,22 +126,33 @@ class GPT4Tokenizer(RegexTokenizer):
         # create new vocab
         self.vocab = self._build_vocab()
 
+
     def encode(self, text, allowed_special=None, verbose=False):
         # Tokenizer can encode a string into a list of integers
 
         pattern = re.compile(self.pattern)
+        text_chunks = []
 
         if allowed_special is not None:
             if allowed_special == "all":
-                print("Registering GPT4 special tokens")
-                #self.special_tokens = self.special_tokens_gpt4
-                special_alt = "|".join(re.escape(s) for s in sorted(self.special_tokens.keys(), key=len, reverse=True))
-                self.pattern = rf"(?:{special_alt})|{self.pattern}"
-                print(f"New pattern: {self.pattern}")
-            else:
-                pass # TODO implement other options for allowed_special
+                if self.verbose:
+                    print("Registering GPT4 special tokens")
+                special_pattern = "|".join("("+re.escape(s)+")" for s in sorted(self.special_tokens.keys(), key=len, reverse=True))
 
-        text_chunks = re.findall(self.pattern, text)
+            else:
+                special_pattern = ""
+        
+            segments = re.split(special_pattern, text, ignore_unused=True)
+            segments = [s for s in segments if s is not None and s != '']
+        else:
+            segments = [text]
+            
+        for s in segments:
+            if s in self.special_tokens.keys():
+                text_chunks.append(s)
+            else:
+                text_chunks.extend(re.findall(self.pattern, s))
+        print(f"text_chunks: {text_chunks}")
 
         if allowed_special is None:
             tokens_chunks = [list(map(int, t.encode('utf-8'))) for t in text_chunks]
@@ -251,8 +262,8 @@ if __name__ == "__main__":
     print(f"Original text: {text}")
     tokens = tokenizer.encode(text, allowed_special="all", verbose=True)
     tokens_gpt_encoded = enc_gpt.encode(text, allowed_special="all")
-    print(f"GPT4 encoded tokens: {tokens_gpt_encoded}")
-    print(f"Encoded tokens: {tokens}")
+    print(f"TikToken tokenizer: {tokens_gpt_encoded}")
+    print(f"Custom tokenizer: {tokens}")
     decoded = tokenizer.decode(tokens)
     print(f"Decoded text: {decoded}")
     print(f"is decoded text same as original? {decoded == text}")

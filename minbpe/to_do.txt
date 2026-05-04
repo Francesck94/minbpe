@@ -1,0 +1,1 @@
+per la parte dei special tokens, controlla che effettivamente il pattern regex funzioni nel splittare il testo
