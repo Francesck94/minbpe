@@ -8,6 +8,8 @@ except ImportError:
     from base import get_stats, merge, render_token, replace_control_characters
     from base import Tokenizer
 
+import os
+
 
 
 class BasicTokenizer(Tokenizer):
@@ -48,9 +50,6 @@ class BasicTokenizer(Tokenizer):
         tokens = text.encode('utf-8')
         tokens = list(map(int, tokens))
 
-        #print("original tokens: ", tokens)
-        #print(f"len ")
-
         for pair_to_merge, new_token in self.merges.items():
             if verbose:
                 print("pair to merge: ", pair_to_merge)
@@ -71,8 +70,6 @@ class BasicTokenizer(Tokenizer):
 
 if __name__ == "__main__":
 
-    import os
-
 
     tokenizer = BasicTokenizer()
 
@@ -81,7 +78,6 @@ if __name__ == "__main__":
     print(len(tokenizer.vocab))
 
     # module path
-
     filepath = os.path.join(os.path.dirname(__file__), '..', 'tests', 'taylorswift.txt')
     print(f"filepath: {filepath}")
     with open(filepath, 'r') as f:
@@ -102,5 +98,5 @@ if __name__ == "__main__":
     print(tokens)
 
     tokenizer_dir = os.path.join(os.path.dirname(__file__), '..', 'saved_tokenizers')
-
-    tokenizer.save("basic_tokenizer")
+    os.makedirs(tokenizer_dir, exist_ok=True)
+    tokenizer.save(os.path.join(tokenizer_dir, "basic_tokenizer"))

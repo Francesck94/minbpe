@@ -12,7 +12,7 @@ test_strings = [
     "", # empty string
     "?", # single character
     "hello world!!!? (안녕하세요!) lol123 😉", # fun small string
-    #"FILE:taylorswift.txt", # FILE: is handled as a special string in unpack()
+    "FILE:taylorswift.txt", # FILE: is handled as a special string in unpack()
 ]
 def unpack(text):
     # we do this because `pytest -v .` prints the arguments to console, and we don't
@@ -49,7 +49,6 @@ The ancestors of llamas are thought to have originated from the Great Plains of 
 # tests
 
 # test encode/decode identity for a few different strings
-# @pytest.mark.parametrize("tokenizer_factory", [BasicTokenizer, RegexTokenizer, GPT4Tokenizer])
 @pytest.mark.parametrize("tokenizer_factory", [BasicTokenizer, RegexTokenizer, GPT4Tokenizer])
 @pytest.mark.parametrize("text", test_strings)
 def test_encode_decode_identity(tokenizer_factory, text):

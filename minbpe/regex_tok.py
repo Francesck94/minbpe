@@ -21,16 +21,15 @@ class RegexTokenizer(BasicTokenizer):
         self.vocab = self._build_vocab() # int -> bytes
         self.pattern=r"""'(?i:[sdmt]|ll|ve|re)|[^\r\n\p{L}\p{N}]?+\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]++[\r\n]*|\s*[\r\n]|\s+(?!\S)|\s+"""
 
+        self.regex_pattern = re.compile(self.pattern)
 
 
     def train(self, text, vocab_size, verbose=False):
         """
         Create the merges and the vocab.
         """
-        pattern = re.compile(self.pattern)
-
         # split the text using the pattern
-        text_chunks = re.findall(pattern, text)
+        text_chunks = re.findall(self.regex_pattern, text)
 
         # convert each chunk to utf-8 bytes
         ids_chunks = []
@@ -41,6 +40,11 @@ class RegexTokenizer(BasicTokenizer):
         last_vocab = max(list(self.vocab.keys())) + 1
 
         merges_to_do = vocab_size - 256
+
+        if verbose:
+            print(f"Initial vocab size: {len(self.vocab)}")
+            print(f"Number of merges to do: {merges_to_do}")
+
         for i in range(0, merges_to_do):
             # get the stats for each chunk
             #stats_for_chunk = [get_stats(ids) for ids in ids_chunks]
@@ -64,9 +68,7 @@ class RegexTokenizer(BasicTokenizer):
     def encode(self, text, verbose=False):
         # Tokenizer can encode a string into a list of integers
 
-        pattern = re.compile(self.pattern)
-
-        text_chunks = re.findall(self.pattern, text)
+        text_chunks = re.findall(self.regex_pattern, text)
 
         tokens_chunks = [list(map(int, t.encode('utf-8'))) for t in text_chunks]
         
@@ -88,7 +90,7 @@ class RegexTokenizer(BasicTokenizer):
         return original_str
     
 
-    def register_special_tokens(self, special_tokens):
+    def register_special_tokens(self, special_tokens, verbose=False):
         self.special_tokens = special_tokens
 
         # create new pattern
@@ -96,11 +98,14 @@ class RegexTokenizer(BasicTokenizer):
             special_token = re.escape(special_token) # escape special characters in the token
             self.pattern = rf"{special_token}|" + self.pattern
 
+        if verbose:
+            print(f"New pattern: {self.pattern}")
+        self.regex_pattern = re.compile(self.pattern)
 
     @staticmethod
     def _merge_stats(stats_list):
         """
-        Combine a list of dict with pair frequency in a single dict
+        Combine a list of dict with pair frequency in a single dict.
         """
         full_stats = {}
         for s in stats_list:

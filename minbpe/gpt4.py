@@ -2,18 +2,19 @@
 Contains the GPT4 Tokenizer class and a few common helper functions.
 """
 try:
-    from .base import get_stats, merge, render_token, replace_control_characters
+    from .base import get_stats, merge
     from .regex_tok import RegexTokenizer
 except ImportError:
-    from base import get_stats, merge, render_token, replace_control_characters
+    from base import get_stats, merge
     from regex_tok import RegexTokenizer
 
 from typing import Optional
 import regex as re
 import tiktoken
-import concurrent.futures
+#from utils import timing
 
 
+### utility functions for recovering merges from tiktoken's mergeable ranks
 def bpe(mergeable_ranks: dict[bytes, int], token: bytes, max_rank: Optional[int] = None) -> list[bytes]:
     parts = [bytes([b]) for b in token]
     while True:
@@ -49,51 +50,52 @@ def recover_merges(mergeable_ranks):
 
     return merges
 
-gpt4_merges = recover_merges(tiktoken.get_encoding("cl100k_base")._mergeable_ranks)
+#gpt4_merges = recover_merges(tiktoken.get_encoding("cl100k_base")._mergeable_ranks)
 
 class GPT4Tokenizer(RegexTokenizer):
     """A BPE tokenizer that uses regular expressions to find pairs to merge"""
-    def __init__(self, shuffle=False, verbose=False):
+    def __init__(self, verbose=False):
         super().__init__()
         enc = tiktoken.get_encoding("cl100k_base")
-        #self.merges = {} # (int, int) -> int
-        self.special_tokens = {} # str -> int, e.g. {'<|endoftext|>': 100257}
-        self.shuffle=shuffle
+        self.special_tokens_gpt4 = {
+    '<|endoftext|>': 100257,
+    '<|fim_prefix|>': 100258,
+    '<|fim_middle|>': 100259,
+    '<|fim_suffix|>': 100260,
+    '<|endofprompt|>': 100276
+}
+        #self.special_tokens = {} # str -> int, e.g. {'<|endoftext|>': 100257}
+        self.special_tokens = self.special_tokens_gpt4
+
         self.byte_shuffle = {i: enc._mergeable_ranks[bytes([i])] for i in range(256)}
+        self.inv_byte_shuffle = {v: k for k, v in self.byte_shuffle.items()}
+
         self.verbose = verbose
         #self.merges = self._shuffle_merges()
-        self.merges = gpt4_merges
-        self.vocab = self._build_vocab_shuffled() # int -> bytes
+        self.merges = recover_merges(tiktoken.get_encoding("cl100k_base")._mergeable_ranks)
+        self.vocab = self._build_vocab_gpt() # int -> bytes
 
-
-    # def _shuffle_merges(self):
-    #     # shuffle the merges according to the GPT4 byte shuffle, so that we can use the same merges
-    #     new_merges = {}
-    #     for pair, new_token in self.merges.items():
-    #         new_pair = (self.byte_shuffle.get(pair[0], pair[0]), self.byte_shuffle.get(pair[1], pair[1]))
-    #         new_merges[new_pair] = new_token
-    #     return new_merges
-    
-    
-    def _build_vocab_shuffled(self):
+    def _build_vocab_gpt(self):
         # vocab is simply and deterministically derived from merges
-        vocab_orig = {idx: bytes([idx]) for idx in range(256)}
-        vocab = {idx: vocab_orig[self.byte_shuffle.get(idx, idx)] for idx in range(256)}
+        vocab = {idx: bytes([idx]) for idx in range(256)}
         for (p0, p1), idx in self.merges.items():
-            #p0, p1 = (self.byte_shuffle.get(p0, p0), self.byte_shuffle.get(p1, p1))
+            p0 = self.inv_byte_shuffle.get(p0, p0)
+            p1 = self.inv_byte_shuffle.get(p1, p1)
             vocab[idx] = vocab[p0] + vocab[p1]
         for special, idx in self.special_tokens.items():
             vocab[idx] = special.encode("utf-8")
         return vocab
-
+    
+    
     def train(self, text, vocab_size, verbose=False):
         """
         Create the merges and the vocab.
         """
+        # inherit the pattern from the RegexTokenizer
         pattern = re.compile(self.pattern)
 
         # split the text using the pattern
-        text_chunks = re.findall(self.pattern, text)
+        text_chunks = re.findall(pattern, text)
 
         # convert each chunk to utf-8 bytes
         ids_chunks = []
@@ -109,7 +111,6 @@ class GPT4Tokenizer(RegexTokenizer):
             #stats_for_chunk = [get_stats(ids) for ids in ids_chunks]
 
             stats = {}
-            #stats = self._merge_stats(stats_for_chunk)
             for ids in ids_chunks:
                 stats = get_stats(ids, stats)
 
@@ -124,174 +125,167 @@ class GPT4Tokenizer(RegexTokenizer):
         # create new vocab
         self.vocab = self._build_vocab()
 
-    def merge_gpt(self,ids, pair, idx):
-        """
-        In the list of integers (ids), replace all consecutive occurrences
-        of pair with the new integer token idx
-        Example: ids=[1, 2, 3, 1, 2], pair=(1, 2), idx=4 -> [4, 3, 4]
-        """
-        newids = []
-        i = 0
-        while i < len(ids):
-            # if not at the very last position AND the pair matches, replace it
-            if ids[i] == pair[0] and i < len(ids) - 1 and ids[i+1] == pair[1]:
-                if self.verbose:
-                    print(f"Merging pair {pair} into new token {idx}")
-                newids.append(idx)
-                i += 2
-            else:
-                newids.append(ids[i])
-                i += 1
-        return newids
-
-    def encode(self, text, verbose=True):
+    def encode(self, text, allowed_special=None):
         # Tokenizer can encode a string into a list of integers
 
-        pattern = re.compile(self.pattern)
+        text_chunks = []
 
-        text_chunks = re.findall(pattern, text)
+        special_tokens = {}
 
-        tokens_chunks = [list(map(int, t.encode('utf-8'))) for t in text_chunks]
-        print(f"Initial tokens chunks: {tokens_chunks}")
-
-        # shuffle the bytes according to the GPT4 byte shuffle, so that we can use the same merges
-        if self.shuffle:
-            tokens_chunks =  [
-                list(map(self._apply_shuffle, tc))
-                for tc in tokens_chunks
-                ]
-        print(f"Tokens chunks after shuffle: {tokens_chunks}")
+        # split the text into segments that are either special tokens or not, and filter out empty segments
+        segments, special_tokens = self._handle_special_tokens_in_encode(text, allowed_special)
         
-        tokens_enc = []
+        
+        for s in segments:
+            if s in special_tokens.keys():
+                text_chunks.append(s)
+            else:
+                text_chunks.extend(re.findall(self.pattern, s))
+        
+        if self.verbose:
+            print(f"text_chunks: {text_chunks}")
 
-        parallel = False
-        if parallel:
-            tokens_enc = list(map(lambda x: self._encode_chunk(x[1], index=x[0], total_chunks=len(tokens_chunks)), enumerate(tokens_chunks)))
+        # convert each chunk to utf-8 bytes
+        if allowed_special is None:
+            tokens_chunks = [list(map(int, t.encode('utf-8'))) for t in text_chunks]
         else:
-            for idx, tt in enumerate(tokens_chunks):
-                if verbose:
-                    if idx % 100 == 0:
-                        print(f"Encoding chunk {idx}/{len(tokens_chunks)}")
-                for pair_to_merge, new_token in self.merges.items():
-                    tt = self.merge_gpt(tt, pair_to_merge, new_token)
-                tokens_enc.append(tt)
+            # if allowed_special is not None, we have to be careful to not encode the special tokens as utf-8 bytes, but rather use their assigned integer ids. So we check if each chunk is a special token, and if so we use the assigned integer id, otherwise we encode as utf-8 bytes.
+            tokens_chunks = []
+            for t in text_chunks:
+                if t in special_tokens.keys():
+                    tokens_chunks.append([special_tokens[t]])
+                else:
+                    tokens_chunks.append(list(map(int, t.encode('utf-8'))))
+
+
+        tokens_chunks_shuffled = self._apply_shuffle_in_encode(tokens_chunks)
+
+        # apply the merges to each chunk
+        if self.verbose:
+            print(f"applying merges...")
+
+        sorted_merges = sorted(self.merges.items(), key=lambda x: x[1]) # sort by the new token id, which is the value in the merges dict
+
+        tokens_enc = map(lambda tok_chunk: self._apply_merges_on_chunk(sorted_merges, tok_chunk), tokens_chunks_shuffled)
 
         ids = [t for ts in tokens_enc for t in ts]
 
         return ids
     
-    def _encode_chunk(self, tok_chunk, index=None, total_chunks=None):
-        """Helper function for encode, to encode a single chunk."""
-        if index is not None and total_chunks is not None:
-            if index % 100 == 0:
-                if self.verbose:
-                    print(f"Encoding chunk {index}/{total_chunks}")
-        for pair_to_merge, new_token in self.merges.items():
-            tok_chunk = self.merge_gpt(tok_chunk, pair_to_merge, new_token)
+    
+    def _apply_merges_on_chunk(self, sorted_merges, tok_chunk):
+        found_merge = True
+        tok_chunk_pair = list(zip(tok_chunk[:-1], tok_chunk[1:]))
+        while found_merge:
+            found_merge = False
+            for pair_to_merge, new_token in sorted_merges:
+                if pair_to_merge in tok_chunk_pair:
+                    # if the pair to merge is in the token list, then merge it
+                    tok_chunk = merge(tok_chunk, pair_to_merge, new_token)
+                    tok_chunk_pair = list(zip(tok_chunk[:-1], tok_chunk[1:]))
+                    found_merge = True
+                    break # we have to break here because the merges have to be applied sequentially, and we can't apply multiple merges at the same time because they might interfere with each other. For example, if we have merges (a, b) -> x and (x, c) -> y, and our token chunk is [a, b, c], we have to first merge (a, b) to get [x, c], and then merge (x, c) to get [y]. If we tried to apply both merges at the same time, we would not know whether to merge (a, b) or (x, c) first.
         return tok_chunk
-    
-    # def _merge_multithreaded(self, tokens_chunks):
-    #     # merge the tokens using multiple threads. This is a helper function for the encode method.
 
-    #     def _merge_single_chunk(tokens, idx, total_chunks):
-    #         if idx % 100 == 0:
-    #             print(f"Encoding chunk {idx}/{total_chunks}")
-    #         for pair_to_merge, new_token in self.merges.items():
-    #             tokens = merge(tokens, pair_to_merge, new_token)
-    #         return tokens
-    #     # we can use the concurrent.futures module to do this.
-    #     with concurrent.futures.ThreadPoolExecutor() as executor:
-    #         futures = []
-    #         for idx, tt in enumerate(tokens_chunks):
-    #             futures.append(executor.submit(_merge_single_chunk, tt, idx, len(tokens_chunks)))
-    #         results = [f.result() for f in futures]
-    #     return results
-    
     def decode(self, ids):
         # Tokenizer can decode a list of integers into a string
-        if self.shuffle:
-            ids = [self._apply_unshuffle(t) for t in ids]
-        original_str = b"".join([self.vocab[idx] for idx in ids])
+
+        # unshuffle the bytes
+        unshuffled_ids = []
+        for idx in ids:
+            unshuffled_ids.append(self.inv_byte_shuffle.get(idx, idx))
+        original_str = b"".join([self.vocab[idx] for idx in unshuffled_ids])
         original_str = original_str.decode("utf-8", errors="replace")
         return original_str
     
 
-    def register_special_tokens(self, special_tokens):
-        self.special_tokens = special_tokens
-
-        # create new pattern
-        for special_token in special_tokens.keys():
-            special_token = re.escape(special_token) # escape special characters in the token
-            self.pattern = rf"{special_token}|" + self.pattern
-
-    # TODO: FIX THIS
-    def _apply_shuffle(self, token):
-        new_token = self.byte_shuffle[token] if token in self.byte_shuffle else token
-        return new_token
+    def _create_special_pattern(self, special_tokens):
+        # create a regex pattern that matches any of the special tokens, sorted by length
+        special_pattern = "|".join("("+re.escape(s)+")" for s in sorted(special_tokens.keys(), key=len, reverse=True))
+        return special_pattern
     
-    def _apply_unshuffle(self, token):
-        # reverse the byte shuffle
-        unshuffled = {v: k for k, v in self.byte_shuffle.items()}
-        new_token = unshuffled[token] if token in unshuffled else token
-        return new_token
+    def _handle_special_tokens_in_encode(self, text, allowed_special):
+        # if allowed_special is "all", we want to treat all special tokens as indivisible units
+        # if allowed_special is a list of special tokens, we want to treat those as indivisible units
+        # otherwise, we don't treat any special tokens as indivisible units
+
+        special_tokens = {}
+        if allowed_special == "all":
+            special_tokens = self.special_tokens
+        elif isinstance(allowed_special, list):
+            special_tokens = {s: self.special_tokens[s] for s in allowed_special}
+        else:
+            return [text], special_tokens
+
+        # split the text into segments that are either special tokens or not, and filter out empty segments
+        special_pattern = self._create_special_pattern(special_tokens)
+        segments = re.split(special_pattern, text, ignore_unused=True)
+        segments = [s for s in segments if s is not None and s != '']
+        return segments, special_tokens
+    
+    #@timing
+    def _apply_shuffle_in_encode(self, tokens_chunks):
+        # apply the byte shuffle to the tokens
+        tokens_chunks_shuffled = []
+        for t_chunk in tokens_chunks:
+            shuffled_chunk = []
+            for tok in t_chunk:
+                shuffled_chunk.append(self.byte_shuffle.get(tok, tok))
+            tokens_chunks_shuffled.append(shuffled_chunk)
+        return tokens_chunks_shuffled
 
 
-    @staticmethod
-    def _merge_stats(stats_list):
-        """
-        Combine a list of dict with pair frequency in a single dict
-        """
-        full_stats = {}
-        for s in stats_list:
-            for k,v in s.items():
-                if k not in full_stats.keys():
-                    full_stats[k] = v
-                else:
-                    current_value = full_stats.get(k)
-                    full_stats[k] = current_value + v
-                    del current_value
-        return full_stats
 
 if __name__ == "__main__":
 
     import os
 
 
-    tokenizer = GPT4Tokenizer(shuffle=False, verbose=True)
+    tokenizer = GPT4Tokenizer(verbose=False)
 
     #print(vars(tokenizer))
 
     print(len(tokenizer.vocab))
 
-    for idx in range(0, 256 + 10):
-        print(f"{idx}: {tokenizer.vocab[idx].decode('utf-8', errors='replace')}")
+    #for idx in range(0, 256 + 10):
+    #     print(f"{idx}: {tokenizer.vocab[idx].decode('utf-8', errors='replace')}")
     #print(tokenizer.vocab)
 
     # module path
 
-    #filepath = os.path.join(os.path.dirname(__file__), '..', 'tests', 'taylorswift.txt')
-    #print(f"filepath: {filepath}")
-    #with open(filepath, 'r') as f:
-    #     text = f.read()
+    filepath = os.path.join(os.path.dirname(__file__), '..', 'tests', 'taylorswift.txt')
+    print(f"filepath: {filepath}")
+    with open(filepath, 'r') as f:
+        text = f.read()
 
-    # tokenizer.train(text, vocab_size=512, verbose=False)
-
+    text = text[:1000]
     # #print(f"final vocab: {tokenizer.vocab}")
 
-    # print(len(tokenizer.vocab))
-    # #print(f"final vocab: {tokenizer.vocab}")
-    # #print(f"\nfinal merges: {tokenizer.merges}\n")
+    
     enc_gpt = tiktoken.get_encoding("cl100k_base")
 
     #text = "hello world!!!? (안녕하세요!) lol123 😉"
-    text = "a"
-    print(f"Original text: {text}")
-    tokens = tokenizer.encode(text, verbose=True)
-    tokens_gpt_encoded = enc_gpt.encode(text)
-    print(f"GPT4 encoded tokens: {tokens_gpt_encoded}")
-    print(f"Encoded tokens: {tokens}")
+    #text = "<|endoftext|><|fim_prefix|>And this one has<|fim_suffix|> tokens.<|fim_middle|> FIM"
+#     text = """
+# <|endoftext|>Hello world this is one document
+# <|endoftext|>And this is another document
+# <|endoftext|><|fim_prefix|>And this one has<|fim_suffix|> tokens.<|fim_middle|> FIM
+# <|endoftext|>Last document!!! 👋<|endofprompt|>
+# """.strip()
+    #text = "a"
+    #print(f"Original text: {text}")
+    import time
+    start = time.perf_counter()
+    tokens = tokenizer.encode(text, allowed_special="all")
+    elapsed = time.perf_counter() - start
+    print(f"Encoding took {elapsed:.4f}s")
+
+    tokens_gpt_encoded = enc_gpt.encode(text, allowed_special="all")
+    elapsed = time.perf_counter() - start
+    #print(f"TikToken tokenizer: {tokens_gpt_encoded}")
+    #print(f"Custom tokenizer: {tokens}")
     decoded = tokenizer.decode(tokens)
-    print(f"Decoded text: {decoded}")
+   # print(f"Decoded text: {decoded}")
     print(f"is decoded text same as original? {decoded == text}")
     
 
