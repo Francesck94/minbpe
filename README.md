@@ -14,7 +14,7 @@ My code is in minbpe directory
 | Step 1 | `BasicTokenizer` — train, encode, decode | Done |
 | Step 2 | `RegexTokenizer` — regex pre-splitting (GPT-4 pattern) + special tokens | Done |
 | Step 3 | `GPT4Tokenizer` — load GPT-4 merges and match tiktoken output | Done |
-| Step 4 | Special token handling (match tiktoken with `allowed_special`) | In progress |
+| Step 4 | Special token handling (match tiktoken with `allowed_special`) | Done|
 | Step 5 | Explore sentencepiece / Unicode code point BPE (Llama-style) | Not started |
 
 ## Repo structure

@@ -212,7 +212,7 @@ class GPT4Tokenizer(RegexTokenizer):
         special_tokens = {}
         if allowed_special == "all":
             special_tokens = self.special_tokens
-        elif isinstance(allowed_special, list):
+        elif isinstance(allowed_special, (list, set)):
             special_tokens = {s: self.special_tokens[s] for s in allowed_special}
         else:
             return [text], special_tokens
